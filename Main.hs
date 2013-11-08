@@ -159,9 +159,6 @@ main = do
   con <- connect (config tid rr toIdris $ handleExit rr [toIdris, fromIdris] idrisPid) True True
   case con of
     Left exc -> print exc
-    Right mirc -> do
---      installHandler keyboardSignal (Catch $ handleExit mirc rr [toIdris, fromIdris, errIdris] idrisPid) Nothing
---      installHandler softwareTermination (Catch $ handleExit mirc rr [toIdris, fromIdris, errIdris] idrisPid) Nothing
-      loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
+    Right mirc -> loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
 
 
