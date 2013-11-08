@@ -43,14 +43,26 @@ setTimeout n tid = do
 sendQuery :: Handle -> String -> Integer -> IO ()
 sendQuery h q i = hPutStrLn h $ convSExp "interpret" q i
 
+firstWordIs :: String -> String -> Bool
+firstWordIs wd str = case stripPrefix wd (dropWhile isSpace str) of
+                       Nothing -> False
+                       Just [] -> True
+                       Just (s:cs) -> isSpace s
+
+allowedCommands :: [String]
+allowedCommands = [ "t"
+                  , "type"
+                  , "i"
+                  , "info"
+                  , "doc"
+                  , "cs"
+                  , "casesplit"
+                  ]
+
 filterQuery :: String -> Maybe String
 filterQuery q = case dropWhile isSpace q of
-  ':':'t':s:_ | isSpace s -> Nothing
-  ':':'t':'y':'p':'e':s:_ | isSpace s -> Nothing
-  ':':'i':s:_ | isSpace s -> Nothing
-  ':':'i':'n':'f':'o':s:_ | isSpace s -> Nothing
-  ':':'d':'o':'c':s:_ | isSpace s -> Nothing
-  ':':_ -> Just "Command not permitted"
+  ':':cs | any (flip firstWordIs cs) allowedCommands -> Nothing
+         | otherwise -> Just "Command not permitted"
   _ -> Nothing
 
 onMessage :: ThreadId -> RetRepo -> Handle -> (MIrc -> SomeException -> IO ()) -> EventFunc
