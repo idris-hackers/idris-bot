@@ -139,9 +139,9 @@ handleExit rr hs pid mirc ex = do
 
 createIdris = (proc "sandbox"
     [ "-M"
-    , "-i", "/home/melvar/.cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.9.1/"
+    , "-i", "/home/melvar/.cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/"
     , "idris"
-    , "-i", ".cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.9.1/base"
+    , "-i", ".cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/base"
     , "--nocolor"
     , "--ideslave"
     ])
