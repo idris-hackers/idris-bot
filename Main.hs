@@ -141,7 +141,7 @@ createIdris = (proc "sandbox"
     [ "-M"
     , "-i", "/home/melvar/.cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/"
     , "idris"
-    , "-i", ".cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/base"
+    , "-i", ".cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/prelude"
     , "--nocolor"
     , "--ideslave"
     ])
