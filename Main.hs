@@ -18,10 +18,13 @@ import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import Network.SimpleIRC
 import Numeric (readHex)
+import System.Directory (createDirectory, getTemporaryDirectory)
 import System.Exit (exitSuccess)
+import System.FilePath ((</>), (<.>))
 import System.IO (Handle, hGetChar, hPutStrLn, hSetBuffering, BufferMode(..), hClose)
 import System.Posix.Signals (Handler(..), installHandler, keyboardSignal, softwareTermination)
-import System.Process (proc, CreateProcess(..), StdStream(..), createProcess, waitForProcess, ProcessHandle, terminateProcess)
+import System.Process (proc, CreateProcess(..), StdStream(..), createProcess, readProcess, rawSystem, waitForProcess, ProcessHandle, terminateProcess)
+import System.Time (ClockTime(..), getClockTime)
 import System.Timeout
 
 
@@ -119,10 +122,8 @@ loop mirc r h = do
           sendMsg mirc origin . encodeUTF8 . truncateStr 300 . convertString $ res
           loop mirc r h
 
-config tid r h hExit = defaultConfig
-  { cAddr = "irc.freenode.net"
-  , cNick = "idris-ircslave"
-  , cUsername = "ircslave"
+config tid r h hExit = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
+  { cUsername = "ircslave"
   , cRealname = "IRC-Idris shim"
   , cChannels = ["#idris"]
   , cEvents = [Privmsg (onMessage tid r h hExit)]
@@ -137,11 +138,25 @@ handleExit rr hs pid mirc ex = do
   terminateProcess pid
   exitSuccess
 
-createIdris = (proc "sandbox"
+mktmpdir name = do
+    TOD s _ <- getClockTime
+    tmp <- getTemporaryDirectory
+    let dirname = tmp </> name <.> show s
+    createDirectory dirname
+    return dirname
+
+prepareHomedir = do
+    libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
+    homedir <- mktmpdir "idris-ircslave"
+    rawSystem "cp" ["-rT", libdir, homedir </> "libs"]
+    return homedir
+
+createIdris homedir = (proc "sandbox"
     [ "-M"
-    , "-i", "/home/melvar/.cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/"
+    , "-H", homedir
+    , "--"
     , "idris"
-    , "-i", ".cabal/share/x86_64-linux-ghc-7.4.2/idris-0.9.10/prelude"
+    , "-i", "libs" </> "prelude"
     , "--nocolor"
     , "--ideslave"
     ])
@@ -151,7 +166,8 @@ createIdris = (proc "sandbox"
 
 main :: IO ()
 main = do
-  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess createIdris
+  homedir <- prepareHomedir
+  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
   rr <- newMVar (0, Map.empty)
