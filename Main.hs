@@ -47,10 +47,9 @@ sendQuery :: Handle -> String -> Integer -> IO ()
 sendQuery h q i = hPutStrLn h $ convSExp "interpret" q i
 
 firstWordIs :: String -> String -> Bool
-firstWordIs wd str = case stripPrefix wd (dropWhile isSpace str) of
-                       Nothing -> False
-                       Just [] -> True
-                       Just (s:cs) -> isSpace s
+firstWordIs wd str = case words str of
+    [] -> False
+    (w:ws) -> w == wd
 
 allowedCommands :: [String]
 allowedCommands = [ "t"
@@ -64,7 +63,7 @@ allowedCommands = [ "t"
 
 filterQuery :: String -> Maybe String
 filterQuery q = case dropWhile isSpace q of
-  ':':cs | any (flip firstWordIs cs) allowedCommands -> Nothing
+  ':':cs | any (`firstWordIs` cs) allowedCommands -> Nothing
          | otherwise -> Just "Command not permitted"
   _ -> Nothing
 
