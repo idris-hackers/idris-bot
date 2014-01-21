@@ -10,7 +10,7 @@ import Control.Exception (SomeException, catch, toException)
 import Control.Monad (replicateM)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
-import Data.List (find, isPrefixOf, stripPrefix, intercalate)
+import Data.List (find, isPrefixOf, stripPrefix, intercalate, (\\))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Text (pack, unpack)
@@ -18,7 +18,7 @@ import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import Network.SimpleIRC
 import Numeric (readHex)
-import System.Directory (createDirectory, getTemporaryDirectory)
+import System.Directory (createDirectory, getTemporaryDirectory, doesFileExist, doesDirectoryExist, copyFile, getDirectoryContents)
 import System.Exit (exitSuccess)
 import System.FilePath ((</>), (<.>))
 import System.IO (Handle, hGetChar, hPutStrLn, hSetBuffering, BufferMode(..), hClose)
@@ -137,6 +137,16 @@ handleExit rr hs pid mirc ex = do
   terminateProcess pid
   exitSuccess
 
+copyRec from to = do
+    ex <- doesFileExist from
+    if ex then copyFile from to
+          else do ex <- doesDirectoryExist from
+                  if ex then do createDirectory to
+                                allEnts <- getDirectoryContents from
+                                let ents = allEnts \\ [".",".."]
+                                mapM_ (\e -> copyRec (from </> e) (to </> e)) ents
+                        else fail $ "copyRec: " ++ show from ++ " does not exist"
+
 mktmpdir name = do
     TOD s _ <- getClockTime
     tmp <- getTemporaryDirectory
@@ -147,7 +157,7 @@ mktmpdir name = do
 prepareHomedir = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
     homedir <- mktmpdir "idris-ircslave"
-    rawSystem "cp" ["-rT", libdir, homedir </> "libs"]
+    copyRec libdir (homedir </> "libs")
     return homedir
 
 createIdris homedir = (proc "sandbox"
