@@ -7,7 +7,7 @@ import Prelude hiding (catch)
 import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch, toException)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, forM_)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
 import Data.List (find, isPrefixOf, stripPrefix, intercalate, (\\))
@@ -157,26 +157,28 @@ mktmpdir name = do
 prepareHomedir = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
     homedir <- mktmpdir "idris-ircslave"
-    copyRec libdir (homedir </> "libs")
-    return homedir
+    ents <- getDirectoryContents libdir
+    let pkgs = ents \\ [".","..","rts","llvm","jsrts"]
+    createDirectory $ homedir </> "libs"
+    forM_ pkgs $ \pkg -> copyRec (libdir </> pkg) (homedir </> "libs" </> pkg)
+    return (homedir, pkgs)
 
-createIdris homedir = (proc "sandbox"
+createIdris homedir pkgs = (proc "sandbox" $
     [ "-M"
     , "-H", homedir
     , "--"
     , "idris"
-    , "-i", "libs" </> "prelude"
     , "--nocolor"
     , "--ideslave"
-    ])
+    ] ++ concatMap (\pkg -> ["-i", "libs" </> pkg]) pkgs)
     { std_in = CreatePipe
     , std_out = CreatePipe
     }
 
 main :: IO ()
 main = do
-  homedir <- prepareHomedir
-  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir
+  (homedir, pkgs) <- prepareHomedir
+  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
   rr <- newMVar (0, Map.empty)
