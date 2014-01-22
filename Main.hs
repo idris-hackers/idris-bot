@@ -19,6 +19,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Network.SimpleIRC
 import Numeric (readHex)
 import System.Directory (createDirectory, getTemporaryDirectory, doesFileExist, doesDirectoryExist, copyFile, getDirectoryContents)
+import System.Environment (getArgs)
 import System.Exit (exitSuccess)
 import System.FilePath ((</>), (<.>))
 import System.IO (Handle, hGetChar, hPutStrLn, hSetBuffering, BufferMode(..), hClose)
@@ -101,6 +102,7 @@ interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringA
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "error", StringAtom err], IntegerAtom i]) = Just ("error: " ++ err, i)
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom "", IntegerAtom _]) = Nothing
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom i]) = Just (str, i)
+interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
 interpretResp x = error ("what: " ++ show x)
 
 truncateStr :: Int -> String -> String
@@ -161,24 +163,31 @@ prepareHomedir = do
     let pkgs = ents \\ [".","..","rts","llvm","jsrts"]
     createDirectory $ homedir </> "libs"
     forM_ pkgs $ \pkg -> copyRec (libdir </> pkg) (homedir </> "libs" </> pkg)
-    return (homedir, pkgs)
+    args <- getArgs
+    idr <- case args of
+        [] -> return False
+        (f:as) -> do
+            copyFile f $ homedir </> "BotPrelude.idr"
+            return True
+    return (homedir, pkgs, idr)
 
-createIdris homedir pkgs = (proc "sandbox" $
+createIdris homedir pkgs idr = (proc "sandbox" $
     [ "-M"
     , "-H", homedir
     , "--"
     , "idris"
     , "--nocolor"
     , "--ideslave"
-    ] ++ concatMap (\pkg -> ["-i", "libs" </> pkg]) pkgs)
+    ] ++ concatMap (\pkg -> ["-i", "libs" </> pkg]) pkgs ++ ["BotPrelude.idr" | idr])
     { std_in = CreatePipe
     , std_out = CreatePipe
     }
 
 main :: IO ()
 main = do
-  (homedir, pkgs) <- prepareHomedir
-  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs
+  (homedir, pkgs, idr) <- prepareHomedir
+  args <- getArgs
+  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
   rr <- newMVar (0, Map.empty)
