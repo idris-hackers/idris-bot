@@ -1,6 +1,7 @@
 module Main where
 
 import IdeSlave (SExp(..), parseSExp, convSExp)
+import IrcColor
 
 import Prelude hiding (catch)
 
@@ -13,6 +14,7 @@ import Data.Char (isSpace)
 import Data.List (find, isPrefixOf, stripPrefix, intercalate, (\\))
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text (pack, unpack)
 import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
@@ -93,12 +95,45 @@ readResp h = do
         e -> error $ "unexpected parse: " ++ show e
     _ -> error "desynced from idris output"
 
+data Decor = Type | Data | Function | Bound Bool -- is it implicit?
+  deriving (Show, Read, Eq)
+
+readDecor :: String -> Maybe Decor
+readDecor "type" = Just Type
+readDecor "data" = Just Data
+readDecor "function" = Just Function
+readDecor "bound" = Just (Bound False)
+readDecor _ = Nothing
+
+decorSpan :: SExp -> Maybe (Integer,Integer,Decor)
+decorSpan (SexpList [IntegerAtom start, IntegerAtom len, SexpList annotations]) = do
+  decorstring <- listToMaybe [ decor | SexpList [SymbolAtom "decor", SymbolAtom decor] <- annotations ]
+  decor <- readDecor decorstring
+  case decor of
+    Bound _ | Just True <- listToMaybe [ imp | SexpList [SymbolAtom "implicit", BoolAtom imp] <- annotations ] -> return (start, len, Bound True)
+    _ -> return (start, len, decor)
+
+decorStyle :: Decor -> StyleCmd
+decorStyle Type = color lightBlue Nothing
+decorStyle Data = color red Nothing
+decorStyle Function = color lightGreen Nothing
+decorStyle (Bound imp) = color pink Nothing ++ if imp then underlined else []
+
+applyDecors :: [(Integer,Integer,Decor)] -> String -> String
+applyDecors [] str = str
+applyDecors ((start,len,decor):ds) str = let (pre, from) = splitAt (fromInteger start) str
+                                             (it, post) = splitAt (fromInteger len) from
+                                             update (s,l,d) = (s - (start + len), l, d)
+                                         in pre ++ applyStyle (decorStyle decor) it ++ applyDecors (map update ds) post
+
 convertString :: String -> String
 convertString = intercalate "  " . filter (not . null) . map (dropWhile isSpace) . lines
 
 interpretResp :: SExp -> Maybe (String, Integer)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom ""], IntegerAtom _]) = Nothing
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom res], IntegerAtom i]) = Just (res, i)
+interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom res, SexpList ann], IntegerAtom i]) = Just (applyDecors (mapMaybe decorSpan ann) res, i)
+interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom res, _], IntegerAtom i]) = Just (res, i)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "error", StringAtom err], IntegerAtom i]) = Just ("error: " ++ err, i)
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom "", IntegerAtom _]) = Nothing
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom i]) = Just (str, i)
