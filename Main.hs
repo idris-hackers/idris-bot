@@ -126,8 +126,17 @@ applyDecors ((start,len,decor):ds) str = let (pre, from) = splitAt (fromInteger 
                                              update (s,l,d) = (s - (start + len), l, d)
                                          in pre ++ applyStyle (decorStyle decor) it ++ applyDecors (map update ds) post
 
+ellipsis = applyStyle (color grey Nothing) "…"
+returnEllipsis = applyStyle (color grey Nothing) "↵…"
+
 convertString :: String -> String
-convertString = intercalate "  " . filter (not . null) . map (dropWhile isSpace) . lines
+convertString str = let ls = filter (not . all isSpace) $ lines str
+                        less = if length ls > 5 then take 4 ls ++ [ls !! 4 ++ returnEllipsis] else ls
+                        (shortLines, rest) = span ((<= 400) . length) less
+                        finalLines = case rest of
+                                          [] -> shortLines
+                                          (l:_) -> shortLines ++ [take 400 l ++ ellipsis]
+                    in unlines finalLines
 
 interpretResp :: SExp -> Maybe (String, Integer)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom ""], IntegerAtom _]) = Nothing
@@ -140,10 +149,6 @@ interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom 
 interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
 interpretResp x = error ("what: " ++ show x)
 
-truncateStr :: Int -> String -> String
-truncateStr n xs | length xs <= n = xs
-                 | otherwise = take n xs ++ "…"
-
 loop :: MIrc -> RetRepo -> Handle -> IO ()
 loop mirc r h = do
   sexp <- readResp h
@@ -155,7 +160,7 @@ loop mirc r h = do
         Nothing -> loop mirc r h
         Just (origin,canceler) -> do
           tryPutMVar canceler ()
-          sendMsg mirc origin . encodeUTF8 . truncateStr 300 . convertString $ res
+          sendMsg mirc origin . encodeUTF8 . convertString $ res
           loop mirc r h
 
 config tid r h hExit = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
@@ -225,7 +230,8 @@ main = do
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
-  rr <- newMVar (0, Map.empty)
+  sendQuery toIdris ":consolewidth 300" 0
+  rr <- newMVar (1, Map.empty)
   tid <- myThreadId
   con <- connect (config tid rr toIdris $ handleExit rr [toIdris, fromIdris] idrisPid) True True
   case con of
