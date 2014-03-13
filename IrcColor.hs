@@ -27,6 +27,7 @@ pink = "13"
 grey = "14"
 lightGrey = "15"
 
+colorHeader :: StyleCmd
 colorHeader = "\x03"
 
 color :: ColorCode -> Maybe ColorCode -> StyleCmd

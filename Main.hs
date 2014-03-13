@@ -3,15 +3,13 @@ module Main where
 import IdeSlave (SExp(..), parseSExp, convSExp)
 import IrcColor
 
-import Prelude hiding (catch)
-
 import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
-import Control.Exception (SomeException, catch, toException)
+import Control.Exception (SomeException, catch)
 import Control.Monad (replicateM, forM_)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
-import Data.List (find, isPrefixOf, stripPrefix, intercalate, (\\))
+import Data.List (stripPrefix, (\\))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (listToMaybe, mapMaybe)
@@ -25,13 +23,14 @@ import System.Environment (getArgs)
 import System.Exit (exitSuccess)
 import System.FilePath ((</>), (<.>))
 import System.IO (Handle, hGetChar, hPutStrLn, hSetBuffering, BufferMode(..), hClose)
-import System.Posix.Signals (Handler(..), installHandler, keyboardSignal, softwareTermination)
-import System.Process (proc, CreateProcess(..), StdStream(..), createProcess, readProcess, rawSystem, waitForProcess, ProcessHandle, terminateProcess)
+import System.Process (proc, CreateProcess(..), StdStream(..), createProcess, readProcess, ProcessHandle, terminateProcess)
 import System.Time (ClockTime(..), getClockTime)
-import System.Timeout
+import System.Timeout (timeout)
 
-
+decodeUTF8 :: ByteString -> String
 decodeUTF8 = unpack . decodeUtf8With lenientDecode
+
+encodeUTF8 :: String -> ByteString
 encodeUTF8 = encodeUtf8 . pack
 
 type RetRepo = MVar (Integer, Map Integer (ByteString, MVar ()))
@@ -39,7 +38,7 @@ type RetRepo = MVar (Integer, Map Integer (ByteString, MVar ()))
 setTimeout :: Int -> ThreadId-> IO (MVar ())
 setTimeout n tid = do
   canceler <- newEmptyMVar
-  forkIO $ do
+  _ <- forkIO $ do
     m <- timeout n $ takeMVar canceler
     case m of
       Just _ -> return ()
@@ -52,7 +51,7 @@ sendQuery h q i = hPutStrLn h $ convSExp "interpret" q i
 firstWordIs :: String -> String -> Bool
 firstWordIs wd str = case words str of
     [] -> False
-    (w:ws) -> w == wd
+    (w:_) -> w == wd
 
 allowedCommands :: [String]
 allowedCommands = [ "t"
@@ -70,8 +69,8 @@ filterQuery q = case dropWhile isSpace q of
          | otherwise -> Just "Command not permitted"
   _ -> Nothing
 
-onMessage :: ThreadId -> RetRepo -> Handle -> (MIrc -> SomeException -> IO ()) -> EventFunc
-onMessage mainth r h hExit mirc msg = case stripPrefix "> " (decodeUTF8 (mMsg msg)) of
+onMessage :: ThreadId -> RetRepo -> Handle -> EventFunc
+onMessage mainth r h mirc msg = case stripPrefix "> " (decodeUTF8 (mMsg msg)) of
                                  Nothing -> return ()
                                  Just query -> case mOrigin msg of
                                    Nothing -> return ()
@@ -80,7 +79,7 @@ onMessage mainth r h hExit mirc msg = case stripPrefix "> " (decodeUTF8 (mMsg ms
                                      Nothing -> do
                                        (i, m) <- takeMVar r
                                        sendQuery h query i
-                                       canceler <- setTimeout (10 * 10^6) mainth
+                                       canceler <- setTimeout (10 * 10 ^ (6 :: Int)) mainth
                                        putMVar r (i + 1, Map.insert i (origin,canceler) m)
                                 `catch` (throwTo mainth :: SomeException -> IO ())
 
@@ -112,6 +111,7 @@ decorSpan (SexpList [IntegerAtom start, IntegerAtom len, SexpList annotations]) 
   case decor of
     Bound _ | Just True <- listToMaybe [ imp | SexpList [SymbolAtom "implicit", BoolAtom imp] <- annotations ] -> return (start, len, Bound True)
     _ -> return (start, len, decor)
+decorSpan _ = Nothing
 
 decorStyle :: Decor -> StyleCmd
 decorStyle Type = color lightBlue Nothing
@@ -126,6 +126,7 @@ applyDecors ((start,len,decor):ds) str = let (pre, from) = splitAt (fromInteger 
                                              update (s,l,d) = (s - (start + len), l, d)
                                          in pre ++ applyStyle (decorStyle decor) it ++ applyDecors (map update ds) post
 
+ellipsis, returnEllipsis :: String
 ellipsis = applyStyle (color grey Nothing) "…"
 returnEllipsis = applyStyle (color grey Nothing) "↵…"
 
@@ -156,40 +157,43 @@ loop mirc r h = do
   case interpretResp sexp of
     Nothing -> loop mirc r h
     Just (res, ret) -> do
-      (i, m) <- readMVar r
+      (_, m) <- readMVar r
       case Map.lookup ret m of
         Nothing -> loop mirc r h
         Just (origin,canceler) -> do
-          tryPutMVar canceler ()
+          _ <- tryPutMVar canceler ()
           sendMsg mirc origin . encodeUTF8 . convertString $ res
           loop mirc r h
 
-config tid r h hExit = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
+config :: ThreadId -> RetRepo -> Handle -> IrcConfig
+config tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
   { cUsername = "ircslave"
   , cRealname = "IRC-Idris shim"
   , cChannels = ["#idris"]
-  , cEvents = [Privmsg (onMessage tid r h hExit)]
+  , cEvents = [Privmsg (onMessage tid r h)]
   }
 
 handleExit :: RetRepo -> [Handle] -> ProcessHandle -> MIrc -> SomeException -> IO ()
 handleExit rr hs pid mirc ex = do
   print ex
-  tryTakeMVar rr
+  _ <- tryTakeMVar rr
   disconnect mirc (encodeUTF8 "Terminated")
   mapM_ hClose hs
   terminateProcess pid
   exitSuccess
 
+copyRec :: FilePath -> FilePath -> IO ()
 copyRec from to = do
     ex <- doesFileExist from
     if ex then copyFile from to
-          else do ex <- doesDirectoryExist from
-                  if ex then do createDirectory to
-                                allEnts <- getDirectoryContents from
-                                let ents = allEnts \\ [".",".."]
-                                mapM_ (\e -> copyRec (from </> e) (to </> e)) ents
-                        else fail $ "copyRec: " ++ show from ++ " does not exist"
+          else do ex' <- doesDirectoryExist from
+                  if ex' then do createDirectory to
+                                 allEnts <- getDirectoryContents from
+                                 let ents = allEnts \\ [".",".."]
+                                 mapM_ (\e -> copyRec (from </> e) (to </> e)) ents
+                         else fail $ "copyRec: " ++ show from ++ " does not exist"
 
+mktmpdir :: String -> IO FilePath
 mktmpdir name = do
     TOD s _ <- getClockTime
     tmp <- getTemporaryDirectory
@@ -197,6 +201,7 @@ mktmpdir name = do
     createDirectory dirname
     return dirname
 
+prepareHomedir :: IO (FilePath, [FilePath], Bool)
 prepareHomedir = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
     homedir <- mktmpdir "idris-ircslave"
@@ -207,11 +212,12 @@ prepareHomedir = do
     args <- getArgs
     idr <- case args of
         [] -> return False
-        (f:as) -> do
+        (f:_) -> do
             copyFile f $ homedir </> "BotPrelude.idr"
             return True
     return (homedir, pkgs, idr)
 
+createIdris :: FilePath -> [FilePath] -> Bool -> CreateProcess
 createIdris homedir pkgs idr = (proc "sandbox" $
     [ "-M"
     , "-H", homedir
@@ -227,14 +233,13 @@ createIdris homedir pkgs idr = (proc "sandbox" $
 main :: IO ()
 main = do
   (homedir, pkgs, idr) <- prepareHomedir
-  args <- getArgs
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
   sendQuery toIdris ":consolewidth 300" 0
   rr <- newMVar (1, Map.empty)
   tid <- myThreadId
-  con <- connect (config tid rr toIdris $ handleExit rr [toIdris, fromIdris] idrisPid) True True
+  con <- connect (config tid rr toIdris) True True
   case con of
     Left exc -> print exc
     Right mirc -> loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
