@@ -9,6 +9,7 @@ import Control.Exception (SomeException, catch)
 import Control.Monad (replicateM, forM_)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
+import Data.Foldable (asum)
 import Data.List (stripPrefix, (\\))
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -59,8 +60,7 @@ allowedCommands = [ "t"
                   , "i"
                   , "info"
                   , "doc"
-                  , "cs"
-                  , "casesplit"
+                  , "total"
                   ]
 
 filterQuery :: String -> Maybe String
@@ -70,7 +70,7 @@ filterQuery q = case dropWhile isSpace q of
   _ -> Nothing
 
 onMessage :: ThreadId -> RetRepo -> Handle -> EventFunc
-onMessage mainth r h mirc msg = case stripPrefix "> " (decodeUTF8 (mMsg msg)) of
+onMessage mainth r h mirc msg = case asum . map (`stripPrefix` decodeUTF8 (mMsg msg)) $ ["> ","( ", "idris-ircslave: "] of
                                  Nothing -> return ()
                                  Just query -> case mOrigin msg of
                                    Nothing -> return ()
@@ -169,7 +169,7 @@ config :: ThreadId -> RetRepo -> Handle -> IrcConfig
 config tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
   { cUsername = "ircslave"
   , cRealname = "IRC-Idris shim"
-  , cChannels = ["#idris"]
+  , cChannels = ["#idris","#esoteric"]
   , cEvents = [Privmsg (onMessage tid r h)]
   }
 
@@ -206,7 +206,7 @@ prepareHomedir = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
     homedir <- mktmpdir "idris-ircslave"
     ents <- getDirectoryContents libdir
-    let pkgs = ents \\ [".","..","rts","llvm","jsrts"]
+    let pkgs = ents \\ [".","..","rts","llvm","jsrts","oldeffects"]
     createDirectory $ homedir </> "libs"
     forM_ pkgs $ \pkg -> copyRec (libdir </> pkg) (homedir </> "libs" </> pkg)
     args <- getArgs
