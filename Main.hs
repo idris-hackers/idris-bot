@@ -159,7 +159,8 @@ loop mirc r h = do
     Just (res, ret) -> do
       (_, m) <- readMVar r
       case Map.lookup ret m of
-        Nothing -> loop mirc r h
+        Nothing -> do print (res, ret)
+                      loop mirc r h
         Just (origin,canceler) -> do
           _ <- tryPutMVar canceler ()
           sendMsg mirc origin . encodeUTF8 . convertString $ res
