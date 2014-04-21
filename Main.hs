@@ -61,6 +61,7 @@ allowedCommands = [ "t"
                   , "info"
                   , "doc"
                   , "total"
+                  , "apropos"
                   ]
 
 filterQuery :: String -> Maybe String
