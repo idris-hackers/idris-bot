@@ -7,8 +7,11 @@ import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch)
 import Control.Monad (replicateM, forM_)
+import Control.Monad.State (execStateT, get, put, lift)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
+import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow)
+import Data.Either.Utils (forceEither)
 import Data.Foldable (asum)
 import Data.List (stripPrefix, (\\))
 import Data.Map (Map)
@@ -166,6 +169,20 @@ loop mirc r h = do
           _ <- tryPutMVar canceler ()
           sendMsg mirc origin . encodeUTF8 . convertString $ res
           loop mirc r h
+
+defaultConfig :: ConfigParser
+defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
+  set' "network" "irc.example.com"
+  set' "nick" "idris-ircslave"
+  sets' "channels" ([] :: [String])
+  sets' "maxCharsPerLine" $ Just (400 :: Int)
+  sets' "maxLinesPerResponse" $ Just (5 :: Int)
+  sets' "consoleWidth" $ Just (200 :: Int)
+  sets' "allowedCommands" ["t", "type"]
+  sets' "interpPrefixes" ["> "]
+    where modifyM f = get >>= lift . f >>= put
+          set' k v = modifyM $ \conf -> set conf "DEFAULT" k v
+          sets' k v = modifyM $ \conf -> setshow conf "DEFAULT" k v
 
 ircConfig :: ThreadId -> RetRepo -> Handle -> IrcConfig
 ircConfig tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
