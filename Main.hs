@@ -167,8 +167,8 @@ loop mirc r h = do
           sendMsg mirc origin . encodeUTF8 . convertString $ res
           loop mirc r h
 
-config :: ThreadId -> RetRepo -> Handle -> IrcConfig
-config tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
+ircConfig :: ThreadId -> RetRepo -> Handle -> IrcConfig
+ircConfig tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
   { cUsername = "ircslave"
   , cRealname = "IRC-Idris shim"
   , cChannels = ["#idris","#esoteric"]
@@ -203,18 +203,17 @@ mktmpdir name = do
     createDirectory dirname
     return dirname
 
-prepareHomedir :: IO (FilePath, [FilePath], Bool)
-prepareHomedir = do
+prepareHomedir :: Maybe FilePath -> IO (FilePath, [FilePath], Bool)
+prepareHomedir prelude = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
     homedir <- mktmpdir "idris-ircslave"
     ents <- getDirectoryContents libdir
     let pkgs = ents \\ [".","..","rts","llvm","jsrts","oldeffects"]
     createDirectory $ homedir </> "libs"
     forM_ pkgs $ \pkg -> copyRec (libdir </> pkg) (homedir </> "libs" </> pkg)
-    args <- getArgs
-    idr <- case args of
-        [] -> return False
-        (f:_) -> do
+    idr <- case prelude of
+        Nothing -> return False
+        Just f -> do
             copyFile f $ homedir </> "BotPrelude.idr"
             return True
     return (homedir, pkgs, idr)
@@ -234,14 +233,18 @@ createIdris homedir pkgs idr = (proc "sandbox" $
 
 main :: IO ()
 main = do
-  (homedir, pkgs, idr) <- prepareHomedir
+  args <- getArgs
+  let (_, botprelude) = case args of
+                                 [] -> (Nothing, Nothing)
+                                 (x:xs) -> (Just x, listToMaybe xs)
+  (homedir, pkgs, idr) <- prepareHomedir botprelude
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
   sendQuery toIdris ":consolewidth 300" 0
   rr <- newMVar (1, Map.empty)
   tid <- myThreadId
-  con <- connect (config tid rr toIdris) True True
+  con <- connect (ircConfig tid rr toIdris) True True
   case con of
     Left exc -> print exc
     Right mirc -> loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
