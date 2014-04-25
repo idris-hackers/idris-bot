@@ -8,10 +8,11 @@ import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch)
 import Control.Monad (replicateM, forM_)
-import Control.Monad.State (execStateT, get, put, lift)
+import Control.Monad.State (execStateT, put, lift)
+import qualified Control.Monad.State as State (get)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
-import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow, readfile)
+import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow, readfile, get)
 import Data.Either.Utils (forceEither)
 import Data.Foldable (asum)
 import Data.List (stripPrefix, (\\))
@@ -181,17 +182,21 @@ defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
   sets' "consoleWidth" $ Just (200 :: Int)
   sets' "allowedCommands" ["t", "type"]
   sets' "interpPrefixes" ["> "]
-    where modifyM f = get >>= lift . f >>= put
+    where modifyM f = State.get >>= lift . f >>= put
           set' k v = modifyM $ \conf -> set conf "DEFAULT" k v
           sets' k v = modifyM $ \conf -> setshow conf "DEFAULT" k v
 
-ircConfig :: ThreadId -> RetRepo -> Handle -> IrcConfig
-ircConfig tid r h = (mkDefaultConfig "irc.freenode.net" "idris-ircslave")
-  { cUsername = "ircslave"
-  , cRealname = "IRC-Idris shim"
-  , cChannels = ["#idris","#esoteric"]
-  , cEvents = [Privmsg (onMessage tid r h)]
-  }
+ircConfig :: ConfigParser -> ThreadId -> RetRepo -> Handle -> IrcConfig
+ircConfig config tid r h = forceEither $ do
+  network <- get config "DEFAULT" "network"
+  nick <- get config "DEFAULT" "nick"
+  channels <- get config "DEFAULT" "channels"
+  return $ (mkDefaultConfig network nick)
+    { cUsername = "ircslave"
+    , cRealname = "IRC-Idris shim"
+    , cChannels = channels
+    , cEvents = [Privmsg (onMessage tid r h)]
+    }
 
 handleExit :: RetRepo -> [Handle] -> ProcessHandle -> MIrc -> SomeException -> IO ()
 handleExit rr hs pid mirc ex = do
@@ -255,7 +260,7 @@ main = do
   let (configfile, botprelude) = case args of
                                    [] -> (Nothing, Nothing)
                                    (x:xs) -> (Just x, listToMaybe xs)
-  _ <- case configfile of
+  config <- case configfile of
     Nothing -> return defaultConfig
     Just file -> forceEither <$> readfile defaultConfig file
   (homedir, pkgs, idr) <- prepareHomedir botprelude
@@ -265,7 +270,7 @@ main = do
   sendQuery toIdris ":consolewidth 300" 0
   rr <- newMVar (1, Map.empty)
   tid <- myThreadId
-  con <- connect (ircConfig tid rr toIdris) True True
+  con <- connect (ircConfig config tid rr toIdris) True True
   case con of
     Left exc -> print exc
     Right mirc -> loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
