@@ -7,18 +7,17 @@ import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch)
-import Control.Monad (replicateM, forM_)
+import Control.Monad (replicateM, forM_, msum)
 import Control.Monad.State (execStateT, put, lift)
 import qualified Control.Monad.State as State (get)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
 import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow, readfile, get)
 import Data.Either.Utils (forceEither)
-import Data.Foldable (asum)
 import Data.List (stripPrefix, (\\))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Maybe (listToMaybe, mapMaybe, fromMaybe)
 import Data.Text (pack, unpack)
 import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
@@ -54,40 +53,35 @@ setTimeout n tid = do
 sendQuery :: Handle -> String -> Integer -> IO ()
 sendQuery h q i = hPutStrLn h $ convSExp "interpret" q i
 
-firstWordIs :: String -> String -> Bool
-firstWordIs wd str = case words str of
-    [] -> False
-    (w:_) -> w == wd
-
-allowedCommands :: [String]
-allowedCommands = [ "t"
-                  , "type"
-                  , "i"
-                  , "info"
-                  , "doc"
-                  , "total"
-                  , "apropos"
-                  ]
-
-filterQuery :: String -> Maybe String
-filterQuery q = case dropWhile isSpace q of
-  ':':cs | any (`firstWordIs` cs) allowedCommands -> Nothing
-         | otherwise -> Just "Command not permitted"
+commandAllowed :: [String] -> String -> Maybe String
+commandAllowed allowed q = case dropWhile isSpace q of
+  ':':cs -> case words cs of
+              [] -> Nothing
+              (w:_) | w `elem` allowed -> Nothing
+                    | otherwise -> Just w
   _ -> Nothing
 
-onMessage :: ThreadId -> RetRepo -> Handle -> EventFunc
-onMessage mainth r h mirc msg = case asum . map (`stripPrefix` decodeUTF8 (mMsg msg)) $ ["> ","( ", "idris-ircslave: "] of
-                                 Nothing -> return ()
-                                 Just query -> case mOrigin msg of
-                                   Nothing -> return ()
-                                   Just origin -> case filterQuery query of
-                                     Just err -> sendMsg mirc origin . encodeUTF8 $ err
-                                     Nothing -> do
-                                       (i, m) <- takeMVar r
-                                       sendQuery h query i
-                                       canceler <- setTimeout (10 * 10 ^ (6 :: Int)) mainth
-                                       putMVar r (i + 1, Map.insert i (origin,canceler) m)
-                                `catch` (throwTo mainth :: SomeException -> IO ())
+onMessage :: ConfigParser -> ThreadId -> RetRepo -> Handle -> EventFunc
+onMessage config mainth rets h mirc msg =
+  do nick <- decodeUTF8 <$> getNickname mirc
+     let sentTo = maybe "noChannel" decodeUTF8 $ mChan msg
+         confsection = if sentTo == nick then "noChannel" else sentTo
+         interpPrefixes = forceEither $ get config confsection "interpPrefixes"
+         allowedCommands = forceEither $ get config confsection "allowedCommands"
+         msgText = decodeUTF8 $ mMsg msg
+         msgQuery = fromMaybe msgText $ stripPrefix (nick ++ ": ") msgText
+     case mOrigin msg of
+       Nothing -> return ()
+       Just origin -> case msum . map (`stripPrefix` msgQuery) $ interpPrefixes of
+         Nothing -> return ()
+         Just msgCommand -> case commandAllowed allowedCommands msgCommand of
+           Just cmd -> sendMsg mirc origin . encodeUTF8 $ "Command " ++ show cmd ++ " not permitted."
+           Nothing -> do
+             (qid, qmap) <- takeMVar rets
+             sendQuery h msgCommand qid
+             canceler <- setTimeout (10 * 10 ^ (6 :: Int)) mainth
+             putMVar rets (qid + 1, Map.insert qid (origin, canceler) qmap)
+    `catch` (throwTo mainth :: SomeException -> IO ())
 
 readResp :: Handle -> IO SExp
 readResp h = do
@@ -195,7 +189,7 @@ ircConfig config tid r h = forceEither $ do
     { cUsername = "ircslave"
     , cRealname = "IRC-Idris shim"
     , cChannels = channels
-    , cEvents = [Privmsg (onMessage tid r h)]
+    , cEvents = [Privmsg (onMessage config tid r h)]
     }
 
 handleExit :: RetRepo -> [Handle] -> ProcessHandle -> MIrc -> SomeException -> IO ()
