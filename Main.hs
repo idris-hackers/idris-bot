@@ -3,6 +3,7 @@ module Main where
 import IdeSlave (SExp(..), parseSExp, convSExp)
 import IrcColor
 
+import Control.Applicative ((<$>))
 import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch)
@@ -10,7 +11,7 @@ import Control.Monad (replicateM, forM_)
 import Control.Monad.State (execStateT, get, put, lift)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
-import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow)
+import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow, readfile)
 import Data.Either.Utils (forceEither)
 import Data.Foldable (asum)
 import Data.List (stripPrefix, (\\))
@@ -251,9 +252,12 @@ createIdris homedir pkgs idr = (proc "sandbox" $
 main :: IO ()
 main = do
   args <- getArgs
-  let (_, botprelude) = case args of
-                                 [] -> (Nothing, Nothing)
-                                 (x:xs) -> (Just x, listToMaybe xs)
+  let (configfile, botprelude) = case args of
+                                   [] -> (Nothing, Nothing)
+                                   (x:xs) -> (Just x, listToMaybe xs)
+  _ <- case configfile of
+    Nothing -> return defaultConfig
+    Just file -> forceEither <$> readfile defaultConfig file
   (homedir, pkgs, idr) <- prepareHomedir botprelude
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
