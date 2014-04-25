@@ -267,7 +267,9 @@ main = do
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
   hSetBuffering fromIdris LineBuffering
-  sendQuery toIdris ":consolewidth 300" 0
+  case forceEither $ get config "DEFAULT" "consoleWidth" of
+    Nothing -> return ()
+    Just width -> sendQuery toIdris (":consolewidth " ++ show (width :: Int)) 0
   rr <- newMVar (1, Map.empty)
   tid <- myThreadId
   con <- connect (ircConfig config tid rr toIdris) True True
