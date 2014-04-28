@@ -38,7 +38,7 @@ decodeUTF8 = unpack . decodeUtf8With lenientDecode
 encodeUTF8 :: String -> ByteString
 encodeUTF8 = encodeUtf8 . pack
 
-type RetRepo = MVar (Integer, Map Integer (ByteString, MVar ()))
+type RetRepo = MVar (Integer, Map Integer (ByteString, String, MVar ()))
 
 setTimeout :: Int -> ThreadId-> IO (MVar ())
 setTimeout n tid = do
@@ -80,7 +80,7 @@ onMessage config mainth rets h mirc msg =
              (qid, qmap) <- takeMVar rets
              sendQuery h msgCommand qid
              canceler <- setTimeout (10 * 10 ^ (6 :: Int)) mainth
-             putMVar rets (qid + 1, Map.insert qid (origin, canceler) qmap)
+             putMVar rets (qid + 1, Map.insert qid (origin, confsection, canceler) qmap)
     `catch` (throwTo mainth :: SomeException -> IO ())
 
 readResp :: Handle -> IO SExp
@@ -130,14 +130,20 @@ ellipsis, returnEllipsis :: String
 ellipsis = applyStyle (color grey Nothing) "…"
 returnEllipsis = applyStyle (color grey Nothing) "↵…"
 
-convertString :: String -> String
-convertString str = let ls = filter (not . all isSpace) $ lines str
-                        less = if length ls > 5 then take 4 ls ++ [ls !! 4 ++ returnEllipsis] else ls
-                        (shortLines, rest) = span ((<= 400) . length) less
-                        finalLines = case rest of
-                                          [] -> shortLines
-                                          (l:_) -> shortLines ++ [take 400 l ++ ellipsis]
-                    in unlines finalLines
+limitString :: Maybe Int -> Maybe Int -> String -> String
+limitString maxChars maxLines str =
+  let nonemptyLines = filter (not . all isSpace) $ lines str
+      fewerLines = case maxLines of
+                     Nothing -> nonemptyLines
+                     Just len -> case splitAt (len-1) nonemptyLines of
+                       (initLines, lastLine : _ : _) -> initLines ++ [lastLine ++ returnEllipsis]
+                       _ -> nonemptyLines
+      shorterLines = case maxChars of
+                       Nothing -> fewerLines
+                       Just len -> case span ((<= len) . length) fewerLines of
+                         (shortLines, longLine : _) -> shortLines ++ [take (len - length ellipsis) longLine ++ ellipsis]
+                         _ -> fewerLines
+  in unlines shorterLines
 
 interpretResp :: SExp -> Maybe (String, Integer)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom ""], IntegerAtom _]) = Nothing
@@ -151,20 +157,22 @@ interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom 
 interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
 interpretResp x = error ("what: " ++ show x)
 
-loop :: MIrc -> RetRepo -> Handle -> IO ()
-loop mirc r h = do
+loop :: ConfigParser -> MIrc -> RetRepo -> Handle -> IO ()
+loop config mirc rets h = let continue = loop config mirc rets h in do
   sexp <- readResp h
   case interpretResp sexp of
-    Nothing -> loop mirc r h
+    Nothing -> continue
     Just (res, ret) -> do
-      (_, m) <- readMVar r
+      (_, m) <- readMVar rets
       case Map.lookup ret m of
         Nothing -> do print (res, ret)
-                      loop mirc r h
-        Just (origin,canceler) -> do
+                      continue
+        Just (origin, confsection, canceler) -> do
+          let maxCharsPerLine = forceEither $ get config confsection "maxCharsPerLine"
+              maxLinesPerResponse = forceEither $ get config confsection "maxLinesPerResponse"
           _ <- tryPutMVar canceler ()
-          sendMsg mirc origin . encodeUTF8 . convertString $ res
-          loop mirc r h
+          sendMsg mirc origin . encodeUTF8 . limitString maxCharsPerLine maxLinesPerResponse $ res
+          continue
 
 defaultConfig :: ConfigParser
 defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
@@ -269,6 +277,6 @@ main = do
   con <- connect (ircConfig config tid rr toIdris) True True
   case con of
     Left exc -> print exc
-    Right mirc -> loop mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
+    Right mirc -> loop config mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
 
 
