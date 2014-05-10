@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts, ScopedTypeVariables #-}
 module Main where
 
 import IdeSlave (SExp(..), parseSExp, convSExp)
@@ -8,11 +9,12 @@ import Control.Concurrent (forkIO, myThreadId, throwTo, ThreadId)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar, tryTakeMVar, putMVar, readMVar, tryPutMVar)
 import Control.Exception (SomeException, catch)
 import Control.Monad (replicateM, forM_, msum)
+import Control.Monad.Error (MonadError)
 import Control.Monad.State (execStateT, put, lift)
 import qualified Control.Monad.State as State (get)
 import Data.ByteString (ByteString)
 import Data.Char (isSpace)
-import Data.ConfigFile (ConfigParser(optionxform), emptyCP, set, setshow, readfile, get)
+import Data.ConfigFile (ConfigParser(optionxform), CPError, emptyCP, set, setshow, readfile, get, sections)
 import Data.Either.Utils (forceEither)
 import Data.List (stripPrefix, (\\))
 import Data.Map (Map)
@@ -25,7 +27,7 @@ import Network.SimpleIRC
 import Numeric (readHex)
 import System.Directory (createDirectory, getTemporaryDirectory, doesFileExist, doesDirectoryExist, copyFile, getDirectoryContents)
 import System.Environment (getArgs)
-import System.Exit (exitSuccess)
+import System.Exit (exitSuccess, exitFailure)
 import System.FilePath ((</>), (<.>))
 import System.IO (Handle, hGetChar, hPutStrLn, hSetBuffering, BufferMode(..), hClose)
 import System.Process (proc, CreateProcess(..), StdStream(..), createProcess, readProcess, ProcessHandle, terminateProcess)
@@ -176,7 +178,6 @@ loop config mirc rets h = let continue = loop config mirc rets h in do
 
 defaultConfig :: ConfigParser
 defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
-  set' "network" "irc.example.com"
   set' "nick" "idris-ircslave"
   sets' "channels" ([] :: [String])
   sets' "maxCharsPerLine" $ Just (400 :: Int)
@@ -199,6 +200,19 @@ ircConfig config tid r h = forceEither $ do
     , cChannels = channels
     , cEvents = [Privmsg (onMessage config tid r h)]
     }
+
+checkConfig :: MonadError CPError m => ConfigParser -> m ()
+checkConfig config = do
+  _ :: String <- get config "DEFAULT" "network"
+  _ :: String <- get config "DEFAULT" "nick"
+  _ :: [String] <- get config "DEFAULT" "channels"
+  _ :: Maybe Int <- get config "DEFAULT" "consoleWidth"
+  forM_ ("DEFAULT" : sections config) $ \sec -> do
+    _ :: Maybe Int <- get config sec "maxCharsPerLine"
+    _ :: Maybe Int <- get config sec "maxLinesPerResponse"
+    _ :: [String] <- get config sec "allowedCommands"
+    _ :: [String] <- get config sec "interpPrefixes"
+    return ()
 
 handleExit :: RetRepo -> [Handle] -> ProcessHandle -> MIrc -> SomeException -> IO ()
 handleExit rr hs pid mirc ex = do
@@ -259,12 +273,15 @@ createIdris homedir pkgs idr = (proc "sandbox" $
 main :: IO ()
 main = do
   args <- getArgs
-  let (configfile, botprelude) = case args of
-                                   [] -> (Nothing, Nothing)
-                                   (x:xs) -> (Just x, listToMaybe xs)
-  config <- case configfile of
-    Nothing -> return defaultConfig
-    Just file -> forceEither <$> readfile defaultConfig file
+  (configfile, botprelude) <- case args of
+                                [] -> do putStrLn "A configuration file is required, see documentation"
+                                         exitFailure
+                                (x:xs) -> return (x, listToMaybe xs)
+  config <- forceEither <$> readfile defaultConfig configfile
+  case checkConfig config of
+    Left err -> do print err
+                   exitFailure
+    Right () -> return ()
   (homedir, pkgs, idr) <- prepareHomedir botprelude
   (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
   hSetBuffering toIdris LineBuffering
