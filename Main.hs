@@ -96,10 +96,11 @@ readResp h = do
         e -> error $ "unexpected parse: " ++ show e
     _ -> error "desynced from idris output"
 
-data Decor = Type | Data | Function | Bound Bool -- is it implicit?
+data Decor = Keyword | Type | Data | Function | Bound Bool -- is it implicit?
   deriving (Show, Read, Eq)
 
 readDecor :: String -> Maybe Decor
+readDecor "keyword" = Just Keyword
 readDecor "type" = Just Type
 readDecor "data" = Just Data
 readDecor "function" = Just Function
@@ -116,6 +117,7 @@ decorSpan (SexpList [IntegerAtom start, IntegerAtom len, SexpList annotations]) 
 decorSpan _ = Nothing
 
 decorStyle :: Decor -> StyleCmd
+decorStyle Keyword = bold
 decorStyle Type = color lightBlue Nothing
 decorStyle Data = color red Nothing
 decorStyle Function = color lightGreen Nothing
