@@ -96,7 +96,13 @@ readResp h = do
         e -> error $ "unexpected parse: " ++ show e
     _ -> error "desynced from idris output"
 
-data Decor = Keyword | Type | Data | Function | Bound Bool -- is it implicit?
+data Decor = Keyword
+           | Type
+           | Data
+           | Function
+           | Bound Bool -- is it implicit?
+           | Metavar
+           | Postulate
   deriving (Show, Read, Eq)
 
 readDecor :: String -> Maybe Decor
@@ -105,6 +111,8 @@ readDecor "type" = Just Type
 readDecor "data" = Just Data
 readDecor "function" = Just Function
 readDecor "bound" = Just (Bound False)
+readDecor "metavar" = Just Metavar
+readDecor "postulate" = Just Postulate
 readDecor _ = Nothing
 
 decorSpan :: SExp -> Maybe (Integer,Integer,Decor)
@@ -122,6 +130,8 @@ decorStyle Type = color lightBlue Nothing
 decorStyle Data = color red Nothing
 decorStyle Function = color lightGreen Nothing
 decorStyle (Bound imp) = color pink Nothing ++ if imp then underlined else []
+decorStyle Metavar = color lightGreen Nothing
+decorStyle Postulate = color lightGreen Nothing ++ bold
 
 applyDecors :: [(Integer,Integer,Decor)] -> String -> String
 applyDecors [] str = str
