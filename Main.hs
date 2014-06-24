@@ -42,6 +42,14 @@ encodeUTF8 = encodeUtf8 . pack
 
 type RetRepo = MVar (Integer, Map Integer (ByteString, String, MVar ()))
 
+data BotState = BotState { configuration :: ConfigParser
+                         , mainThread :: ThreadId
+                         , returnInfo :: RetRepo
+                         , toIdris :: Handle
+                         , fromIdris :: Handle
+                         , idrisProcess :: ProcessHandle
+                         }
+
 setTimeout :: Int -> ThreadId-> IO (MVar ())
 setTimeout n tid = do
   canceler <- newEmptyMVar
@@ -63,8 +71,8 @@ commandAllowed allowed q = case dropWhile isSpace q of
                     | otherwise -> Just w
   _ -> Nothing
 
-onMessage :: ConfigParser -> ThreadId -> RetRepo -> Handle -> EventFunc
-onMessage config mainth rets h mirc msg =
+onMessage :: BotState -> EventFunc
+onMessage (BotState { configuration = config, mainThread = mainth, returnInfo = rets, toIdris = h }) mirc msg =
   do nick <- decodeUTF8 <$> getNickname mirc
      let sentTo = maybe "noChannel" decodeUTF8 $ mChan msg
          confsection = if sentTo == nick then "noChannel" else sentTo
@@ -171,8 +179,8 @@ interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom 
 interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
 interpretResp x = error ("what: " ++ show x)
 
-loop :: ConfigParser -> MIrc -> RetRepo -> Handle -> IO ()
-loop config mirc rets h = let continue = loop config mirc rets h in do
+loop :: BotState -> MIrc -> IO ()
+loop botState@(BotState { configuration = config, returnInfo = rets, fromIdris = h }) mirc = let continue = loop botState mirc in do
   sexp <- readResp h
   case interpretResp sexp of
     Nothing -> continue
@@ -201,8 +209,8 @@ defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
           set' k v = modifyM $ \conf -> set conf "DEFAULT" k v
           sets' k v = modifyM $ \conf -> setshow conf "DEFAULT" k v
 
-ircConfig :: ConfigParser -> ThreadId -> RetRepo -> Handle -> IrcConfig
-ircConfig config tid r h = forceEither $ do
+ircConfig :: BotState -> IrcConfig
+ircConfig botState@(BotState { configuration = config }) = forceEither $ do
   network <- get config "DEFAULT" "network"
   nick <- get config "DEFAULT" "nick"
   channels <- get config "DEFAULT" "channels"
@@ -210,7 +218,7 @@ ircConfig config tid r h = forceEither $ do
     { cUsername = "ircslave"
     , cRealname = "IRC-Idris shim"
     , cChannels = channels
-    , cEvents = [Privmsg (onMessage config tid r h)]
+    , cEvents = [Privmsg (onMessage botState)]
     }
 
 checkConfig :: MonadError CPError m => ConfigParser -> m ()
@@ -226,12 +234,12 @@ checkConfig config = do
     _ :: [String] <- get config sec "interpPrefixes"
     return ()
 
-handleExit :: RetRepo -> [Handle] -> ProcessHandle -> MIrc -> SomeException -> IO ()
-handleExit rr hs pid mirc ex = do
+handleExit :: BotState -> MIrc -> SomeException -> IO ()
+handleExit (BotState { returnInfo = rr, toIdris = to, fromIdris = from, idrisProcess = pid }) mirc ex = do
   print ex
   _ <- tryTakeMVar rr
   disconnect mirc (encodeUTF8 "Terminated")
-  mapM_ hClose hs
+  mapM_ hClose [to, from]
   terminateProcess pid
   exitSuccess
 
@@ -295,17 +303,18 @@ main = do
                    exitFailure
     Right () -> return ()
   (homedir, pkgs, idr) <- prepareHomedir botprelude
-  (Just toIdris, Just fromIdris, Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
-  hSetBuffering toIdris LineBuffering
-  hSetBuffering fromIdris LineBuffering
+  (Just toIdris', Just fromIdris', Nothing, idrisPid) <- createProcess $ createIdris homedir pkgs idr
+  hSetBuffering toIdris' LineBuffering
+  hSetBuffering fromIdris' LineBuffering
   case forceEither $ get config "DEFAULT" "consoleWidth" of
     Nothing -> return ()
-    Just width -> sendQuery toIdris (":consolewidth " ++ show (width :: Int)) 0
+    Just width -> sendQuery toIdris' (":consolewidth " ++ show (width :: Int)) 0
   rr <- newMVar (1, Map.empty)
   tid <- myThreadId
-  con <- connect (ircConfig config tid rr toIdris) True True
+  let botState = BotState config tid rr toIdris' fromIdris' idrisPid
+  con <- connect (ircConfig botState) True True
   case con of
     Left exc -> print exc
-    Right mirc -> loop config mirc rr fromIdris `catch` handleExit rr [toIdris, fromIdris] idrisPid mirc
+    Right mirc -> loop botState mirc `catch` handleExit botState mirc
 
 
