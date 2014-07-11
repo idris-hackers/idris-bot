@@ -174,6 +174,7 @@ interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringA
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "ok", StringAtom res, _], IntegerAtom i]) = Just (res, i)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "error", StringAtom err], IntegerAtom i]) = Just (err, i)
 interpretResp (SexpList [SymbolAtom "return", SexpList [SymbolAtom "error", StringAtom err, SexpList ann], IntegerAtom i]) = Just (applyDecors (mapMaybe decorSpan ann) err, i)
+interpretResp (SexpList [SymbolAtom "warning", SexpList [StringAtom _, SexpList _, SexpList _, StringAtom msg, SexpList ann], IntegerAtom i]) = Just (applyDecors (mapMaybe decorSpan ann) msg, i)
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom "", IntegerAtom _]) = Nothing
 interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom i]) = Just (str, i)
 interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
