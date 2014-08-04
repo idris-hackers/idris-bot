@@ -102,7 +102,7 @@ readResp h = do
       case parseSExp sex of 
         Right r -> return r
         e -> error $ "unexpected parse: " ++ show e
-    _ -> error "desynced from idris output"
+    _ -> error $ "desynced from idris output: " ++ show hx
 
 data Decor = Keyword
            | Type
