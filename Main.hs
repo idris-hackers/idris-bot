@@ -197,7 +197,7 @@ loop botState@(BotState { configuration = config, returnInfo = rets, fromIdris =
           let maxCharsPerLine = forceEither $ get config confsection "maxCharsPerLine"
               maxLinesPerResponse = forceEither $ get config confsection "maxLinesPerResponse"
           _ <- tryPutMVar canceler ()
-          sendMsg mirc origin . encodeUTF8 . limitString maxCharsPerLine maxLinesPerResponse $ res
+          _ <- forkIO $ sendMsg mirc origin . encodeUTF8 . limitString maxCharsPerLine maxLinesPerResponse $ res
           continue
 
 defaultConfig :: ConfigParser
