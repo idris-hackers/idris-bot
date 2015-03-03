@@ -288,7 +288,7 @@ createIdris homedir pkgs idr = (proc "sandbox" $
     , "--"
     , "idris"
     , "--nocolor"
-    , "--ideslave"
+    , "--ide-mode"
     ] ++ concatMap (\pkg -> ["-i", "libs" </> pkg]) pkgs ++ ["BotPrelude.idr" | idr])
     { std_in = CreatePipe
     , std_out = CreatePipe
