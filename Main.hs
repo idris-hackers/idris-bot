@@ -181,6 +181,7 @@ interpretResp (SexpList [SymbolAtom "write-string", StringAtom str, IntegerAtom 
 interpretResp (SexpList [SymbolAtom "write-decorated", SexpList [StringAtom str, SexpList ann], IntegerAtom i]) =  Just (applyDecors (mapMaybe decorSpan ann) str, i)
 interpretResp (SexpList [SymbolAtom "set-prompt", StringAtom _, IntegerAtom _]) = Nothing
 interpretResp (SexpList [SymbolAtom "protocol-version", IntegerAtom v, IntegerAtom i]) = Just ("Protocol version: " ++ show v, i)
+interpretResp (SexpList [SymbolAtom "output", _, IntegerAtom i]) = Nothing
 interpretResp x = error ("what: " ++ show x)
 
 loop :: BotState -> MIrc -> IO ()
