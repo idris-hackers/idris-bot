@@ -1,6 +1,5 @@
-This bot connects an Idris REPL with IRC by running `idris` in IDEslave mode,
-piping queries from IRC to it, interpreting the responses and sending them
-back.
+This bot connects an Idris REPL with IRC by running `idris` in IDE-mode, piping
+queries from IRC to it, interpreting the responses and sending them back.
 
 One argument is required, naming the config file to use.
 
@@ -21,7 +20,7 @@ section `[DEFAULT]`). `[noChannel]` configures options for direct messages.
 #### Options
 
 - `network`: (bare word, global) Hostname to connect to. Required.
-- `nick`: (bare word, global) Nick to use. Default: `idris-ircslave`
+- `nick`: (bare word, global) Nick to use. Default: `idris-bot`
 - `channels`: (`[String]`, global) Channels to join. Default: `[]`
 - `maxCharsPerLine`: (`Maybe Int`) Character limit per line. `Nothing` means
   unlimited. Default: `Just 400`

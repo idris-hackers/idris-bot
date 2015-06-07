@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts, ScopedTypeVariables #-}
 module Main where
 
-import IdeSlave (SExp(..), parseSExp, convSExp)
+import IdeMode (SExp(..), parseSExp, convSExp)
 import IrcColor
 
 import Control.Applicative ((<$>))
@@ -203,7 +203,7 @@ loop botState@(BotState { configuration = config, returnInfo = rets, fromIdris =
 
 defaultConfig :: ConfigParser
 defaultConfig = forceEither . flip execStateT emptyCP {optionxform = id} $ do
-  set' "nick" "idris-ircslave"
+  set' "nick" "idris-bot"
   sets' "channels" ([] :: [String])
   sets' "maxCharsPerLine" $ Just (400 :: Int)
   sets' "maxLinesPerResponse" $ Just (5 :: Int)
@@ -220,7 +220,7 @@ ircConfig botState@(BotState { configuration = config }) = forceEither $ do
   nick <- get config "DEFAULT" "nick"
   channels <- get config "DEFAULT" "channels"
   return $ (mkDefaultConfig network nick)
-    { cUsername = "ircslave"
+    { cUsername = "idris-bot"
     , cRealname = "IRC-Idris shim"
     , cChannels = channels
     , cEvents = [Privmsg (onMessage botState)]
@@ -270,7 +270,7 @@ mktmpdir name = do
 prepareHomedir :: Maybe FilePath -> IO (FilePath, [FilePath], Bool)
 prepareHomedir prelude = do
     libdir <- init `fmap` readProcess "idris" ["--libdir"] ""
-    homedir <- mktmpdir "idris-ircslave"
+    homedir <- mktmpdir "idris-bot"
     ents <- getDirectoryContents libdir
     let pkgs = ents \\ [".","..","rts","llvm","jsrts","oldeffects"]
     createDirectory $ homedir </> "libs"

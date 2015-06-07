@@ -1,4 +1,4 @@
-module IdeSlave(parseSExp, convSExp, SExp(..)) where
+module IdeMode(parseSExp, convSExp, SExp(..)) where
 
 import Control.Applicative ((<$>), (<$), (*>))
 import Numeric (readDec)
